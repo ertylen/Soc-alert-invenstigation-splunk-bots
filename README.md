@@ -1,62 +1,42 @@
-## SOC Alert Investigation — Splunk BOTS (v1 & v2) 
+# SOC Alert Investigation — Splunk BOTS
 
-Practical SOC analyst portfolio project built on Splunk's public `Boss of the SOC (BOTS)` datasets. Each scenario below walks through log review, timeline reconstruction, indicator extraction, and MITRE ATT&CK mapping — the way an entry-level SOC analyst would document a real investigation.
+A portfolio of investigations using Splunk's public Boss of the SOC training datasets. I use SPL searches to review activity, connect events, identify indicators, and explain what the evidence supports.
 
-## About this project
+These are training investigations, not incidents handled for an employer or client. The reports document my lab work and include screenshots of my search results. External research is cited separately from observations in the logs.
 
-- `Goal:` demonstrate ability to investigate alerts, read logs, and produce clear written findings.
+## Investigations
 
-  `Data source`  [Splunk BOTSv1](https://github.com/splunk/botsv1) / [BOTSv2](https://github.com/splunk/botsv2) — free, public, made for training.
+| Scenario | Dataset | Focus | Report |
+|---|---|---|---|
+| 01 — Brute force login | BOTSv1 | HTTP password guessing, password extraction, and request timing | [Read report](Scenario-01-brute-force-login/report.md) |
+| 02 — Cerber ransomware | BOTSv1 | Script execution, process ancestry, affected files, and a suspicious download | [Read report](Scenario-02-cerber-ransomware/report.md) |
 
-  `Tools` Splunk Enterprise (free trial / dev license), VirtualBox or VMware for the lab VM.
+## Skills demonstrated
 
-  `Disclaimer`: all data used is Splunk's official public training dataset. No real or client data involved.
+- Filtering Windows, Sysmon, HTTP, and firewall events in Splunk.
+- Extracting fields with `rex` and summarizing results with `stats`.
+- Distinguishing event counts from distinct file or password counts.
+- Reading process command lines and parent process relationships.
+- Separating observed facts, interpretations, and evidence gaps.
+- Mapping relevant behavior to MITRE ATT&CK and proposing response actions.
 
-## Lab setup
+## Lab and reproduction
 
-## Option A — Hosted/demo Splunk instance (BOTS already loaded) 
+Use an authorized Splunk lab with BOTSv1 loaded. These searches use `index=botsv1`; adjust the index and field names to match your installation. Start with **All time** because the dataset contains historical events, then narrow the time range once you identify the relevant activity.
 
-1. Log in to your demo/hosted Splunk instance.
+For a local setup, follow the dataset's installation instructions and check current Splunk licensing requirements. Screenshots may display a different timezone from the UTC timestamps inside raw Windows events.
 
-2. Confirm the index name that holds the BOTS data — check `Settings` → `Indexes`, or run index=* sourcetype=*`  and inspect which index returns Windows Security / network events. It may be `botsv1`, `botsv2`, `main`, or a custom name.
+## Repository guide
 
-3. Swap that index name into all searches below and start investigating — no local install needed.
+- [Scenario 01](Scenario-01-brute-force-login/report.md): existing brute force investigation and its evidence screenshots.
+- [Scenario 02 overview](Scenario-02-cerber-ransomware/README.md): scope and key results.
+- [Scenario 02 report](Scenario-02-cerber-ransomware/report.md): investigation steps, SPL, evidence, limitations, and recommendations.
+- [Scenario 02 screenshots](Scenario-02-cerber-ransomware/screenshots/): original evidence images, renamed for readability.
 
-Option B — Self-hosted Splunk (manual setup):
+## Sources and scope
 
-1. Install Splunk Enterprise (free trial license, no cost, up to 500MB/day ingest).
+- [Splunk BOTSv1](https://github.com/splunk/botsv1) — source training dataset.
+- [Splunk BOTSv2](https://github.com/splunk/botsv2) — reference for future work; no BOTSv2 investigation is presented here yet.
+- [MITRE ATT&CK](https://attack.mitre.org/) — technique reference.
 
-2. Set up a VM for the Splunk instance (VirtualBox/VMware).
-
-3. Take a clean snapshot before importing the dataset, so you can always roll back:
-
-  ```` bash
-
-   # VirtualBox
-
-   VBoxManage snapshot `SOC-Lab` take  clean_state
-
-   # VMware — use the Snapshot button in the VM menu, or:
-
-   vmrun snapshot `SOC-Lab.vmx` clean_state
-  ````
-  
-
-4. Download and index the BOTS dataset (instructions in Splunk's repo README for each version).
-
-5. Confirm data is searchable:  `index=botsv1 or ` `index=botsv2` 
-
-## Repository structure
-
-
-````
-soc-alert-investigation-splunk-bots/
-
-├── README.md
-
-├── scenario-01-brute-force-login/
-
-│   ├── report.md
-
-│   └── screenshots/
-```` 
+Scenario 02 currently covers exercises 4.11–4.14 from the supplied training material. Exercise numbering can differ between platforms. Dataset ownership remains with the original providers; this repository contains investigation notes and screenshots, not the dataset or malware samples.
