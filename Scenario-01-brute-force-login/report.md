@@ -124,6 +124,6 @@ Investigation based on Splunk's public Boss of the SOC (BOTS) training dataset. 
 
 ![First password attempt](<1.First Password.png>)
 
-![Password used by script and browser clients](<3.Correct Password.png>)
+![Password used by script and browser clients](3.Correct%20%20Password.png)
 
 ![Time between password submissions](<2.Time Interval.png>)
