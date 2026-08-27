@@ -116,3 +116,14 @@ Use User-Agent strings such as Python-urllib as supporting detection signals rat
 If compromise is confirmed, reset the affected credentials, revoke active sessions, and review the account's subsequent actions.
 
 Investigation based on Splunk's public Boss of the SOC (BOTS) training dataset. The queries and reported results document an analysis of the imreallynotbatman.com brute force scenario.
+
+
+## 8. Evidence screenshots
+
+![Distinct password count](<4.Unique Password.png>)
+
+![First password attempt](<1.First Password.png>)
+
+![Password used by script and browser clients](<3.Correct Password.png>)
+
+![Time between password submissions](<2.Time Interval.png>)
