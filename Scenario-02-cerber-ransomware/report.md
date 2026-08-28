@@ -128,10 +128,6 @@ The logs and exercise context strongly support malicious activity. Some parts, s
 
 I would isolate the affected endpoint, preserve the relevant logs, and look for the same indicators on other hosts. I would also check why the firewall only monitored the file, verify which files were actually modified or encrypted, review available clean backups, and search for any follow-on activity from the same infrastructure.
 
-## What I would say in an interview
-
-I used Splunk BOTSv1 to follow part of a Cerber ransomware chain. I started with Sysmon to identify the parent process behind a suspicious launch, then counted distinct text-file paths in the affected user's profile, and finally checked Fortigate logs for the suspicious download. The main results were parent PID `3968`, `406` distinct `.txt` paths, and the file `mhtr.jpg`. I also separated direct log evidence from assumptions — for example, Event ID 2 alone does not prove encryption, and the steganography conclusion came from external campaign research.
-
 ## Sources
 
 - [Splunk BOTSv1](https://github.com/splunk/botsv1)
