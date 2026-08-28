@@ -130,10 +130,6 @@ A full account compromise is **not confirmed** by this evidence alone. To prove 
 - Treat suspicious User-Agent values as supporting signals, not as a blocking rule by themselves.
 - If compromise is confirmed, reset the affected credentials and revoke active sessions.
 
-## What I would say in an interview
-
-> I investigated repeated HTTP POST requests to a login form in Splunk BOTSv1. I extracted passwords from `form_data` with `rex`, counted 412 distinct values with `stats dc()`, identified the first attempted password, then correlated the password `batman` across a Python script and a browser User-Agent. That confirmed automated password guessing, but I kept successful account compromise as unconfirmed because I did not have direct authentication-success evidence.
-
 ---
 
 Training investigation based on Splunk's public Boss of the SOC dataset.
