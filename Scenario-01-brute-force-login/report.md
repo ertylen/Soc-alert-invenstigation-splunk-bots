@@ -1,129 +1,139 @@
-Scenario 1: Suspicious Login / Brute Force Investigation
+# Scenario 01 — Brute Force Login Investigation
 
-Dataset: Splunk BOTSv1 (index="botsv1")
-Alert type: Suspected brute force against imreallynotbatman.com
+**Dataset:** Splunk BOTSv1  
+**Target:** `imreallynotbatman.com`  
+**Alert type:** Suspicious login activity / password guessing
 
-# 1. Summary
+## Quick recall
 
-While reviewing HTTP traffic to imreallynotbatman.com, I identified a large volume of POST requests to the site's login form. The activity included 412 distinct password values and the User-Agent Python-urllib/2.7, a pattern consistent with automated password guessing.
+This scenario is about identifying an automated password-guessing attack against the login page of `imreallynotbatman.com`.
 
-I reconstructed the sequence from the first submitted password to the use of batman by the script and its subsequent use by a browser client. The two observed submissions of batman were 92.17 seconds apart. This suggests that a potentially recovered credential was then used in a browser, but the searches shown below do not independently prove successful authentication.
+What I found:
+- Source IP `23.22.63.114` sent many HTTP POST requests to the login form.
+- The requests used `Python-urllib/2.7`, which is consistent with scripted activity.
+- I extracted **412 distinct password values** from the POST data.
+- The first observed password was `12345678`.
+- The password `batman` appeared first from the script and later from a browser client.
+- The two `batman` submissions were **92.17 seconds apart**.
 
-# 2. Timeline
+Important limitation: the evidence confirms password guessing, but the searches below do **not** prove that authentication succeeded.
 
-| Time (UTC) | Event | Target |
-|---|---|---|
-| 2016-08-10 14:45:21.226 | First password submitted by the script: `12345678` | imreallynotbatman.com |
-| 2016-08-10 14:46:33.689 | Script submits the candidate password `batman` | imreallynotbatman.com |
-| 2016-08-10 14:48:05.858 | Browser client submits the same password | imreallynotbatman.com |
+---
 
+## 1. Investigation goal
 
+The goal was to determine whether the HTTP activity represented brute-force login attempts, identify useful indicators, and check whether a guessed password was later reused from a browser.
 
-# 3. Indicators and observations
+## 2. Timeline
+
+| Time (UTC) | Event |
+|---|---|
+| 2016-08-10 14:45:21.226 | First observed scripted password submission: `12345678` |
+| 2016-08-10 14:46:33.689 | Script submits `batman` |
+| 2016-08-10 14:48:05.858 | Browser client submits `batman` |
+
+## 3. Indicators
 
 - **Source IP:** `23.22.63.114`
-- **Destination IP:** `192.250.70`
-- **Target site:** `imreallynotbatman.com`
+- **Destination IP:** `192.168.250.70`
+- **Target:** `imreallynotbatman.com`
 - **Script User-Agent:** `Python-urllib/2.7`
 - **Browser User-Agent:** `Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; rv:11.0) like Gecko`
-- **Distinct password values submitted:** 412
-- **First password submitted:** `12345678`
-- **Candidate recovered password:** `batman`
+- **Distinct password values:** 412
+- **First password:** `12345678`
+- **Password reused by script and browser:** `batman`
 
-User-Agent strings are client-controlled and can be spoofed. They support the analysis but do not establish the attacker's identity, intent, or tool on their own.
+User-Agent values are client-controlled, so they are supporting evidence rather than proof of attacker identity or tooling.
 
-The password values above are from Splunk's public training dataset, not live credentials.
+## 4. Splunk investigation
 
-# 4. Splunk searches used
+### 4.1 Count distinct password values
 
-Count distinct password values:
+```spl
+index="botsv1" sourcetype="stream:http" src_ip="23.22.63.114" dest_ip="192.168.250.70" http_method="POST" form_data="*username*passwd*"
+| rex field=form_data "passwd=(?<password>[^&]+)"
+| stats dc(password) AS unique_passwords
+```
 
-``
- index="botsv1" sourcetype="stream:http" src_ip="23.22.63.114" dest_ip="192.168.250.70" http_method="POST" form_data="*username*passwd*"
- | rex field=form_data "passwd=(?<password>[^&]+)"
- | stats dc(password) AS unique_passwords
-``
+**Result:** `412` distinct password values.
 
-**RESULT:** 412 distinct password values.
+This is the number of unique extracted passwords, not the total number of login attempts and not a count of failed authentications.
 
-This is a count of unique extracted values, not a count of failed logins or total login attempts.
+![Distinct password count](<4.Unique Password.png>)
 
-Identify the first password submitted
+### 4.2 Find the first submitted password
 
-``
- index="botsv1" sourcetype="stream:http" src_ip="23.22.63.114" dest_ip="192.168.250.70" http_method="POST" form_data="*passwd*"
- | rex field=form_data "passwd=(?<password>[^&]+)"
- | sort 0 + _time
- | table _time, password
- | head 1
-``
+```spl
+index="botsv1" sourcetype="stream:http" src_ip="23.22.63.114" dest_ip="192.168.250.70" http_method="POST" form_data="*passwd*"
+| rex field=form_data "passwd=(?<password>[^&]+)"
+| sort 0 + _time
+| table _time password
+| head 1
+```
 
-**RESULT:** The first observed password was 12345678, submitted at 14:45:21.226.
+**Result:** the first observed password was `12345678` at `14:45:21.226` UTC.
 
-Identify a password used by both script and browser clients
+![First password attempt](<1.First Password.png>)
 
-``
- index="botsv1" sourcetype="stream:http" dest_ip="192.168.250.70" http_method="POST" from_data"*username*passwd*"
- | rex field=form_data "passwd=(?<password>[^&]+)"
- | stats count dc(http_user_agent) AS agent_count values(http_user_agent) AS agents by password
- | where agent_count>1 
-``
+### 4.3 Find a password used by both script and browser clients
 
-**RESULT:** batman was the only password in the result set associated with both Python-urllib/2.7 and the browser User-Agent.
+```spl
+index="botsv1" sourcetype="stream:http" dest_ip="192.168.250.70" http_method="POST" form_data="*username*passwd*"
+| rex field=form_data "passwd=(?<password>[^&]+)"
+| stats count dc(http_user_agent) AS agent_count values(http_user_agent) AS agents by password
+| where agent_count > 1
+```
 
-This makes batman a candidate recovered password. However, the query groups requests across source IPs and accounts. Correlate the source IP, username, timestamps, and authentication evidence before attributing the browser activity to the same attacker or declaring the account compromised.
+**Result:** `batman` was associated with both `Python-urllib/2.7` and the browser User-Agent.
 
-Calculate the interval between observed password submissions
+This makes `batman` a strong candidate for a guessed password that was then manually tested. The query alone does not prove that the same person controlled both clients or that the login succeeded.
 
+![Password used by script and browser clients](3.Correct%20%20Password.png)
 
-``
+### 4.4 Measure the time between the two `batman` submissions
+
+```spl
 index="botsv1" sourcetype="stream:http" dest_ip="192.168.250.70" http_method="POST" form_data="*passwd=batman*"
 | stats min(_time) AS first_observed max(_time) AS last_observed range(_time) AS seconds
 | eval seconds=round(seconds,2)
 | convert ctime(first_observed) ctime(last_observed)
-| table first_observed, last_observed, seconds
-`` 
+| table first_observed last_observed seconds
+```
 
-**RESULT:** 92.17 seconds between the first and last matching events: 14:46:33.689 and 14:48:05.858.
+**Result:** `92.17` seconds between the first and last matching events.
 
-This measures the range of matching events, not the time between a proven password discovery and a proven successful login. Inspect the underlying events to confirm their clients and account. The wildcard filter can also match longer password values beginning with batman; verify the extracted password is an exact match.
+This measures the time range between matching POST requests. It should not be described as confirmed time-to-compromise because successful authentication has not been proven.
 
-# 5. Verdict
+![Time between password submissions](<2.Time Interval.png>)
 
-True positive for password-guessing activity. The large number of distinct password values, the short time window, and the Python client User-Agent support an automated brute force assessment.
+## 5. Verdict
 
-Account compromise remains unconfirmed by the searches presented here. The subsequent browser submission of batman is consistent with an attempt to use a recovered credential. Confirm success through application authentication logs, response content, session evidence, or subsequent authenticated activity. HTTP 200 or a change in User-Agent alone is insufficient.
+**True positive: automated password-guessing activity.**
 
+The combination of a high number of distinct passwords, repeated POST requests, a short time window, and the Python client supports the brute-force assessment.
 
-# 6. MITRE ATT&CK mapping
+A full account compromise is **not confirmed** by this evidence alone. To prove successful access I would look for application authentication logs, session creation, redirect behavior, response content, or authenticated activity after the password submission.
+
+## 6. MITRE ATT&CK
 
 | Tactic | Technique | ID | Assessment |
 |---|---|---|---|
-| Credential Access | Brute Force: Password Guessing | T1110.001 | Supported by the observed password-guessing activity |
-| Initial Access | Valid Accounts | T1078 | Apply only if successful account access is confirmed |
+| Credential Access | Brute Force: Password Guessing | T1110.001 | Confirmed by observed password-guessing behavior |
+| Initial Access | Valid Accounts | T1078 | Only applicable if successful login is confirmed |
 
+## 7. Recommended response
 
-# 7. Recommendations
+- Add rate limiting or progressive delays to repeated login attempts.
+- Use MFA, especially for privileged accounts.
+- Alert on bursts of failed authentication attempts followed by a successful login.
+- Correlate source IP, username, session creation, and subsequent account activity.
+- Treat suspicious User-Agent values as supporting signals, not as a blocking rule by themselves.
+- If compromise is confirmed, reset the affected credentials and revoke active sessions.
 
-Apply login rate limits and progressive delays. Consider temporary account lockouts, balancing protection against the risk of attackers deliberately locking out legitimate users.
+## What I would say in an interview
 
-Require MFA for administrative accounts and restrict access to administration endpoints where practical.
+> I investigated repeated HTTP POST requests to a login form in Splunk BOTSv1. I extracted passwords from `form_data` with `rex`, counted 412 distinct values with `stats dc()`, identified the first attempted password, then correlated the password `batman` across a Python script and a browser User-Agent. That confirmed automated password guessing, but I kept successful account compromise as unconfirmed because I did not have direct authentication-success evidence.
 
-Alert on bursts of authentication failures and correlate them with subsequent successful logins and account activity.
+---
 
-Use User-Agent strings such as Python-urllib as supporting detection signals rather than the sole basis for blocking. Attackers can change them, and legitimate automation can use them.
-
-If compromise is confirmed, reset the affected credentials, revoke active sessions, and review the account's subsequent actions.
-
-Investigation based on Splunk's public Boss of the SOC (BOTS) training dataset. The queries and reported results document an analysis of the imreallynotbatman.com brute force scenario.
-
-
-## 8. Evidence screenshots
-
-![Distinct password count](<4.Unique Password.png>)
-
-![First password attempt](<1.First Password.png>)
-
-![Password used by script and browser clients](3.Correct%20%20Password.png)
-
-![Time between password submissions](<2.Time Interval.png>)
+Training investigation based on Splunk's public Boss of the SOC dataset.
