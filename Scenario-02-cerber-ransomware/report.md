@@ -1,24 +1,36 @@
-# Scenario 02 - Cerber Ransomware
+# Scenario 02 — Cerber Ransomware Investigation
 
-Notes from my Splunk BOTSv1 lab, covering questions 4.11-4.14. I used Sysmon and Fortigate logs to check the process launch, count text-file paths in Bob Smith's profile, and identify the downloaded file.
+**Dataset:** Splunk BOTSv1  
+**Host:** `we8105desk`  
+**User:** `WAYNECORPINC\bob.smith`
 
-| Question | Result |
-|---|---|
-| 4.11 - Parent process ID | `3968` |
-| 4.12 - Text files | `406` distinct paths in the lab search |
-| 4.13 - Downloaded file | `mhtr.jpg` |
-| 4.14 - Likely obfuscation | Steganography, based on external research |
+## Quick recall
 
-## 4.11 - Finding the parent process
+This one is easiest to remember as:
 
-I searched for `121214.tmp` together with `.vbs` in Sysmon:
+**`wscript.exe → cmd.exe → 121214.tmp → 406 .txt paths → mhtr.jpg → steganography`**
+
+What I found:
+- `wscript.exe` was the parent of `cmd.exe`.
+- The parent process ID was `3968`.
+- The lab search returned `406` distinct `.txt` paths in Bob Smith's profile.
+- A Fortigate event showed the suspicious file `mhtr.jpg` coming from `92.222.104.182`.
+- External research on this Cerber campaign links `mhtr.jpg` with steganography.
+
+The important part is not just the answers. I also checked what each log actually proves and where the evidence is incomplete.
+
+---
+
+## 1. Parent process behind the launch
+
+I searched Sysmon for the temporary file together with the VBS activity:
 
 ```spl
 index=botsv1 source="WinEventLog:Microsoft-Windows-Sysmon/Operational"
-    "*121214.tmp*" "*.vbs*"
+"*121214.tmp*" "*.vbs*"
 ```
 
-This returned one process-creation event (`EventID=1`). The command line used `cmd.exe /C START` to launch `121214.tmp` from Bob's roaming profile.
+The event shows `cmd.exe` being started with `cmd.exe /C START`. Its parent process is `wscript.exe`, which was running the VBS script.
 
 | Field | Value |
 |---|---|
@@ -28,33 +40,37 @@ This returned one process-creation event (`EventID=1`). The command line used `c
 | ProcessId | `1476` |
 | ParentProcessId | `3968` |
 | ParentImage | `C:\Windows\SysWOW64\wscript.exe` |
-| Script in ParentCommandLine | `20429.vbs` |
+| Script | `20429.vbs` |
 
-The answer is **3968**. It is the parent ID on the `cmd.exe` event; **1476** is the child PID. The screenshot does not show a separate process-creation record for `121214.tmp` itself.
+**Result:** `3968`
 
-![Process event showing ParentProcessId 3968](screenshots/01-parent-process.png)
+The main thing I had to watch here was the difference between the child PID and the parent PID. `1476` belongs to `cmd.exe`; `3968` is the parent process ID asked for in the exercise.
 
-## 4.12 - Counting the text files
+![Parent process event](screenshots/01-parent-process.png)
 
-I limited the search to `we8105desk` and `.txt` paths under Bob's Windows profile, then counted distinct filenames:
+## 2. Counting the text-file paths
+
+Next I filtered Sysmon events for `.txt` files under Bob Smith's profile:
 
 ```spl
 index=botsv1 host="we8105desk"
 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
 EventCode=2
 TargetFilename="C:\\Users\\bob.smith.WAYNECORPINC\\*.txt"
-| stats dc(TargetFilename) AS encrypted_txt_files
+| stats dc(TargetFilename) AS txt_files
 ```
 
-The result is **406**. The profile filter excludes files elsewhere on the machine, and `dc(TargetFilename)` avoids counting repeated events for one path as separate files.
+**Result:** `406` distinct paths.
 
-There is a limit to this result: Sysmon Event ID 2 records changes to file creation time, not encryption. **406** is the answer for this ransomware exercise, but the query alone does not prove that every file was encrypted. The column name `encrypted_txt_files` is just an alias. Confirming encryption would require more evidence, such as file-content changes or related process activity.
+I used `dc(TargetFilename)` because the same path can appear more than once in the logs. Counting events directly could therefore give a misleading number.
 
-![Search returning 406 distinct text-file paths](screenshots/02-text-file-count.png)
+One limitation is worth keeping: Sysmon Event ID 2 records a file creation-time change. By itself, it does not prove that every one of those files was encrypted. In the context of the Cerber exercise, `406` is the expected count, but I would want extra file or process evidence before making that claim in a real incident.
 
-## 4.13 - Finding the download
+![Text-file count](screenshots/02-text-file-count.png)
 
-I checked infected-file events for `192.168.250.100`. The `rex` commands extract the URL and original action from the raw firewall log:
+## 3. Finding the suspicious download
+
+I then searched the Fortigate UTM logs for infected-file detections from `192.168.250.100`:
 
 ```spl
 index=botsv1 sourcetype=fgt_utm
@@ -64,45 +80,62 @@ srcip="192.168.250.100" msg="File is infected."
 | table _time srcip dstip filename download_url virus original_action quarskip
 ```
 
-The event identifies **mhtr.jpg** at `hxxp://92[.]222[.]104[.]182/mhtr.jpg` (URL defanged). The detection is `Malware_Generic.P0`.
+**Result:** `mhtr.jpg`
 
-The action matters here: it says **monitored**, and `quarskip` says **File-was-not-quarantined.** This shows a detection, not a confirmed block or cleanup. The generic signature also does not identify Cerber on its own.
+The event points to:
 
-![Fortigate event for mhtr.jpg](screenshots/03-malware-download.png)
+`hxxp://92[.]222[.]104[.]182/mhtr.jpg`
 
-## 4.14 - Why steganography?
+The detection name is `Malware_Generic.P0`.
 
-[Netskope's Cerber analysis](https://www.netskope.com/blog/anatomy-ransomware-attack-cerber-uses-steganography-hide-plain-sight) describes malware hidden inside `mhtr.jpg` and lists the same delivery IP. That supports **steganography** as the answer: malicious content concealed inside an image.
+The firewall action is also useful: it shows `monitored`, and `quarskip` indicates the file was not quarantined. So the log proves a detection, but not that the firewall blocked or removed the file.
 
-A `.jpg` extension alone would not establish this. This part relies on published research; no malware sample was decoded or matched by hash for this report.
+![Fortigate malware event](screenshots/03-malware-download.png)
 
-## Timing and scope
+## 4. Why steganography?
 
-The firewall result displays **2016-08-24 09:48:14**, and the process event displays **09:48:21**. They are seven seconds apart if both searches used the same timezone. The raw Sysmon `UtcTime` is **16:48:21.537 UTC**, so the displayed times should not be labelled UTC.
+The `.jpg` extension alone is not enough to say steganography.
 
-These three screenshots cover only part of the scenario. They do not separately establish the host-to-IP mapping, full infection chain, or total encryption impact. The searches are recorded from the lab screenshots and were not rerun while preparing these notes.
+I checked published analysis of this Cerber campaign. Netskope describes malicious content hidden inside `mhtr.jpg` and references the same delivery infrastructure. That supports **steganography** as the answer for this part of the exercise.
 
-## ATT&CK references
+I did not decode the image or analyze a malware sample myself, so I keep this finding separate from the things directly visible in my Splunk logs.
 
-| Technique | Connection to the findings |
-|---|---|
-| T1059.005 - Visual Basic | `wscript.exe` running a `.vbs` script |
-| T1059.003 - Windows Command Shell | `cmd.exe /C START` |
-| T1105 - Ingress Tool Transfer | Suspicious file transfer |
-| T1027.003 - Steganography | Supported by the external analysis |
-| T1486 - Data Encrypted for Impact | Ransomware scenario context; not proven by Event ID 2 alone |
+## 5. Short timeline
 
-[MITRE ATT&CK](https://attack.mitre.org/techniques/enterprise/)
+The Fortigate event appears at `09:48:14`, and the process event at `09:48:21` in the Splunk display — about seven seconds apart if both searches use the same timezone.
 
-## Next steps in a live incident
+The raw Sysmon event contains a UTC timestamp, so I would not label the displayed Splunk times as UTC without first checking the timezone configuration.
 
-I would isolate the suspected endpoint, preserve the relevant evidence, and check other hosts and shared folders for related activity. I would also review why the firewall detection was monitored rather than blocked, then confirm the affected files and available clean backups. These are proposed actions, not work performed in this lab.
+## 6. Verdict
+
+The evidence is consistent with the Cerber ransomware infection chain used in the BOTSv1 exercise:
+
+`VBS execution → cmd.exe launch → suspicious temporary executable → file activity → suspicious download`
+
+The logs and exercise context strongly support malicious activity. Some parts, such as the exact encryption impact and the steganography finding, need either additional host evidence or external research rather than being proven by a single event.
+
+## 7. MITRE ATT&CK
+
+| Technique | ID | Why it fits |
+|---|---|---|
+| Visual Basic | T1059.005 | `wscript.exe` running a `.vbs` script |
+| Windows Command Shell | T1059.003 | `cmd.exe /C START` |
+| Ingress Tool Transfer | T1105 | Suspicious file download |
+| Steganography | T1027.003 | Supported by campaign research |
+| Data Encrypted for Impact | T1486 | Fits the ransomware scenario, but not proven by Event ID 2 alone |
+
+## 8. What I would check in a real incident
+
+I would isolate the affected endpoint, preserve the relevant logs, and look for the same indicators on other hosts. I would also check why the firewall only monitored the file, verify which files were actually modified or encrypted, review available clean backups, and search for any follow-on activity from the same infrastructure.
+
+## What I would say in an interview
+
+I used Splunk BOTSv1 to follow part of a Cerber ransomware chain. I started with Sysmon to identify the parent process behind a suspicious launch, then counted distinct text-file paths in the affected user's profile, and finally checked Fortigate logs for the suspicious download. The main results were parent PID `3968`, `406` distinct `.txt` paths, and the file `mhtr.jpg`. I also separated direct log evidence from assumptions — for example, Event ID 2 alone does not prove encryption, and the steganography conclusion came from external campaign research.
 
 ## Sources
 
-- [Splunk BOTSv1](https://github.com/splunk/botsv1) - public training dataset.
-- Lab questions 4.11-4.14 and the three screenshots above.
-- [Netskope: Cerber and steganography](https://www.netskope.com/blog/anatomy-ransomware-attack-cerber-uses-steganography-hide-plain-sight).
-- [Microsoft Sysmon documentation](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon).
+- [Splunk BOTSv1](https://github.com/splunk/botsv1)
+- [Netskope — Cerber ransomware and steganography](https://www.netskope.com/blog/anatomy-ransomware-attack-cerber-uses-steganography-hide-plain-sight)
+- [Microsoft Sysmon documentation](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon)
 
-This is a training exercise, not a client incident. No malware samples are included.
+Training exercise only. No malware samples are included in this repository.
